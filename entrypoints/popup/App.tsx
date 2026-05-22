@@ -88,7 +88,7 @@ function App() {
     <main className="recorder">
       <header className="recorder__header">
         <div>
-          <p className="recorder__eyebrow">Tab Recorder</p>
+          <p className="recorder__eyebrow">SREC</p>
           <h1>{elapsedTime}</h1>
         </div>
         <span className={`status status--${status.state}`}>

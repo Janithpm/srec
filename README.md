@@ -1,3 +1,3 @@
-# WXT + React
+# SREC
 
-This template should help get you started developing with React in WXT.
+A WXT Chrome extension for recording the active browser tab with sound.

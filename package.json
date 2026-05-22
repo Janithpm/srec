@@ -1,5 +1,5 @@
 {
-  "name": "simple-tab-recorder",
+  "name": "srec",
   "description": "A WXT Chrome extension for recording the active tab with sound.",
   "private": true,
   "version": "0.0.0",
