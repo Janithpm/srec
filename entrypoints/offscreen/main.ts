@@ -4,6 +4,9 @@ type OffscreenControlMessage =
   | { type: 'CANCEL_OFFSCREEN_RECORDING' }
   | { type: 'REVOKE_RECORDING_URL'; blobUrl: string };
 
+const VIDEO_BITS_PER_SECOND = 12_000_000;
+const AUDIO_BITS_PER_SECOND = 192_000;
+
 let mediaRecorder: MediaRecorder | null = null;
 let mediaStream: MediaStream | null = null;
 let audioContext: AudioContext | null = null;
@@ -87,7 +90,11 @@ async function startRecording(streamId: string) {
   keepTabAudioAudible(mediaStream);
 
   const mimeType = getSupportedMimeType();
-  mediaRecorder = new MediaRecorder(mediaStream, mimeType ? { mimeType } : undefined);
+  mediaRecorder = new MediaRecorder(mediaStream, {
+    ...(mimeType ? { mimeType } : {}),
+    videoBitsPerSecond: VIDEO_BITS_PER_SECOND,
+    audioBitsPerSecond: AUDIO_BITS_PER_SECOND,
+  });
 
   mediaRecorder.ondataavailable = (event) => {
     if (event.data.size > 0) {
