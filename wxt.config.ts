@@ -5,7 +5,7 @@ export default defineConfig({
   modules: ['@wxt-dev/module-react'],
   manifest: {
     name: 'SREC',
-    description: 'Record the active browser tab with sound and save it as a WebM file.',
+    description: 'Record the active browser tab with sound and save it as an MP4 file.',
     minimum_chrome_version: '116',
     icons: {
       16: 'icon/icon16.png',

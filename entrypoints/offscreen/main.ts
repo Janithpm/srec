@@ -21,6 +21,13 @@ type RecoveredRecording = {
 
 const VIDEO_BITS_PER_SECOND = 12_000_000;
 const AUDIO_BITS_PER_SECOND = 192_000;
+const KEYFRAME_INTERVAL_MS = 1000;
+const MIME_TYPES = [
+  'video/mp4;codecs=avc1,mp4a.40.2',
+  'video/mp4;codecs=avc1,opus',
+  'video/webm;codecs=vp8,opus',
+  'video/webm',
+];
 
 let mediaRecorder: MediaRecorder | null = null;
 let mediaStream: MediaStream | null = null;
@@ -108,19 +115,20 @@ async function startRecording(streamId: string, startedAt: number) {
 
   keepTabAudioAudible(mediaStream);
 
-  // The tab's tracks end when the recorded tab is closed. Finish the recording
-  // and save what was captured instead of losing it.
   mediaStream.getTracks().forEach((track) => track.addEventListener('ended', stopRecording));
 
   const mimeType = getSupportedMimeType();
-  const recorder = new MediaRecorder(mediaStream, {
+  const options: MediaRecorderOptions & { videoKeyFrameIntervalDuration?: number } = {
     ...(mimeType ? { mimeType } : {}),
     videoBitsPerSecond: VIDEO_BITS_PER_SECOND,
     audioBitsPerSecond: AUDIO_BITS_PER_SECOND,
-  });
+    videoKeyFrameIntervalDuration: KEYFRAME_INTERVAL_MS,
+  };
+  const recorder = new MediaRecorder(mediaStream, options);
   mediaRecorder = recorder;
+  const recordedMimeType = recorder.mimeType || 'video/webm';
 
-  backupId = await startBackup(startedAt, mimeType || 'video/webm');
+  backupId = await startBackup(startedAt, recordedMimeType);
 
   recorder.ondataavailable = (event) => {
     if (event.data.size > 0) {
@@ -140,21 +148,19 @@ async function startRecording(streamId: string, startedAt: number) {
       return;
     }
 
-    const blob = new Blob(chunks, { type: recorder.mimeType || 'video/webm' });
+    const blob = new Blob(chunks, { type: recordedMimeType });
     const blobUrl = URL.createObjectURL(blob);
     const savedBackupId = backupId;
     const pendingBackupWrites = backupWrites;
 
     cleanup();
 
-    // Wait for the last chunk to reach the backup so the background can delete
-    // the whole backup once the download has started.
     pendingBackupWrites
       .then(() =>
         chrome.runtime.sendMessage({
           type: 'RECORDING_STOPPED',
           blobUrl,
-          filename: createRecordingFilename(new Date()),
+          filename: createRecordingFilename(new Date(), recordedMimeType),
           backupId: savedBackupId,
         }),
       )
@@ -229,7 +235,7 @@ async function recoverRecordings() {
     const blob = new Blob(backupChunks, { type: backup.mimeType });
     recovered.push({
       blobUrl: URL.createObjectURL(blob),
-      filename: createRecordingFilename(new Date(backup.startedAt), '-recovered'),
+      filename: createRecordingFilename(new Date(backup.startedAt), backup.mimeType, '-recovered'),
       backupId: backup.id,
     });
   }
@@ -261,18 +267,19 @@ function cleanup() {
 }
 
 function getSupportedMimeType() {
-  const mimeTypes = ['video/webm;codecs=vp8,opus', 'video/webm'];
-  return mimeTypes.find((mimeType) => MediaRecorder.isTypeSupported(mimeType)) ?? '';
+  return MIME_TYPES.find((mimeType) => MediaRecorder.isTypeSupported(mimeType)) ?? '';
 }
 
-function createRecordingFilename(date: Date, suffix = '') {
+function createRecordingFilename(date: Date, mimeType: string, suffix = '') {
   const timestamp = date
     .toISOString()
     .replace(/\.\d{3}Z$/, '')
     .replace('T', '-')
     .replaceAll(':', '-');
 
-  return `tab-recording-${timestamp}${suffix}.webm`;
+  const extension = mimeType.startsWith('video/mp4') ? 'mp4' : 'webm';
+
+  return `tab-recording-${timestamp}${suffix}.${extension}`;
 }
 
 function sendRecordingError(error: string) {
