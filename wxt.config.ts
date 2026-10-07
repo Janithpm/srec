@@ -21,6 +21,14 @@ export default defineConfig({
         128: 'icon/icon128.png',
       },
     },
-    permissions: ['activeTab', 'tabCapture', 'offscreen', 'downloads', 'storage'],
+    permissions: [
+      'activeTab',
+      'tabCapture',
+      'offscreen',
+      'downloads',
+      'storage',
+      'scripting',
+      'unlimitedStorage',
+    ],
   },
 });

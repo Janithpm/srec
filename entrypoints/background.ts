@@ -1,6 +1,9 @@
+import { deleteRecordingBackup, listRecordingBackups } from '@/utils/recording-backup';
+
 type RecordingStatus = {
   state: 'idle' | 'recording' | 'error';
   startedAt: number | null;
+  tabId: number | null;
   error: string | null;
 };
 
@@ -12,10 +15,15 @@ type PopupMessage =
 type OffscreenMessage =
   | { type: 'OFFSCREEN_READY' }
   | { type: 'RECORDING_STARTED' }
-  | { type: 'RECORDING_STOPPED'; blobUrl: string; filename: string }
+  | { type: 'RECORDING_STOPPED'; blobUrl: string; filename: string; backupId: string | null }
   | { type: 'RECORDING_ERROR'; error: string };
 
 type ExtensionMessage = PopupMessage | OffscreenMessage;
+
+type RecoverRecordingsResponse = {
+  ok: boolean;
+  recordings?: { blobUrl: string; filename: string; backupId: string }[];
+};
 
 const OFFSCREEN_URL = 'offscreen.html';
 const STATUS_STORAGE_KEY = 'recordingStatus';
@@ -23,6 +31,7 @@ const STATUS_STORAGE_KEY = 'recordingStatus';
 const idleStatus: RecordingStatus = {
   state: 'idle',
   startedAt: null,
+  tabId: null,
   error: null,
 };
 
@@ -44,6 +53,29 @@ export default defineBackground(() => {
 
     return true;
   });
+
+  // The injected close warning is lost when the recorded tab navigates, so add it again.
+  chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+    if (changeInfo.status !== 'complete') {
+      return;
+    }
+
+    ensureStatusLoaded()
+      .then(() => {
+        if (status.state === 'recording' && status.tabId === tabId) {
+          return setCloseWarning(tabId, true);
+        }
+      })
+      .catch(console.error);
+  });
+
+  chrome.runtime.onStartup.addListener(() => {
+    recoverInterruptedRecordings().catch(console.error);
+  });
+
+  chrome.runtime.onInstalled.addListener(() => {
+    recoverInterruptedRecordings().catch(console.error);
+  });
 });
 
 async function handleMessage(message: ExtensionMessage) {
@@ -63,6 +95,7 @@ async function handleMessage(message: ExtensionMessage) {
 
     case 'RECORDING_STARTED':
       await setStatus({
+        ...status,
         state: 'recording',
         startedAt: status.startedAt ?? Date.now(),
         error: null,
@@ -70,8 +103,12 @@ async function handleMessage(message: ExtensionMessage) {
       await setRecordingBadge();
       return { ok: true, status };
 
+    // Sent after a stop from the popup, and also when the recorded tab is closed.
     case 'RECORDING_STOPPED':
       await downloadRecording(message.blobUrl, message.filename);
+      if (message.backupId) {
+        await deleteRecordingBackup(message.backupId).catch(console.error);
+      }
       await cleanupAfterRecording();
       resolveStopCompletion();
       return { ok: true, status };
@@ -97,6 +134,7 @@ async function startRecording() {
   await setStatus({
     state: 'recording',
     startedAt: Date.now(),
+    tabId: null,
     error: null,
   });
   await setRecordingBadge();
@@ -105,12 +143,14 @@ async function startRecording() {
     await ensureOffscreenDocument();
     const tabId = await getActiveTabId();
     const streamId = await getTabMediaStreamId(tabId);
+    await setStatus({ ...status, tabId });
 
     await chrome.runtime.sendMessage({
       type: 'START_OFFSCREEN_RECORDING',
       streamId,
       startedAt: status.startedAt,
     });
+    await setCloseWarning(tabId, true);
   } catch (error) {
     await setError(getErrorMessage(error));
     throw error;
@@ -135,8 +175,8 @@ async function ensureOffscreenDocument() {
   if (!creatingOffscreen) {
     creatingOffscreen = chrome.offscreen.createDocument({
       url: OFFSCREEN_URL,
-      reasons: [chrome.offscreen.Reason.USER_MEDIA],
-      justification: 'Record the selected browser tab with audio.',
+      reasons: [chrome.offscreen.Reason.USER_MEDIA, chrome.offscreen.Reason.BLOBS],
+      justification: 'Record the selected browser tab with audio and save recordings.',
     });
   }
 
@@ -189,6 +229,7 @@ async function downloadRecording(blobUrl: string, filename: string) {
 }
 
 async function cleanupAfterRecording() {
+  await setCloseWarning(status.tabId, false);
   await setStatus(idleStatus);
 
   await clearRecordingBadge();
@@ -196,14 +237,18 @@ async function cleanupAfterRecording() {
 }
 
 async function setError(error: string) {
+  const recordedTabId = status.tabId;
+
   await setStatus({
     state: 'error',
     startedAt: null,
+    tabId: null,
     error,
   });
 
   await Promise.all([
     clearRecordingBadge(),
+    setCloseWarning(recordedTabId, false),
     chrome.runtime.sendMessage({ type: 'CANCEL_OFFSCREEN_RECORDING' }).catch(() => {}),
   ]);
   await closeOffscreenDocument();
@@ -213,6 +258,71 @@ async function setError(error: string) {
 async function closeOffscreenDocument() {
   if (await hasOffscreenDocument()) {
     await chrome.offscreen.closeDocument();
+  }
+}
+
+// Recordings are backed up to IndexedDB while they run. A backup that is still
+// there when the browser starts belongs to a recording that was interrupted
+// (browser quit or crashed), so rebuild it and download it.
+async function recoverInterruptedRecordings() {
+  await ensureStatusLoaded();
+
+  if (isRecording() || (await listRecordingBackups()).length === 0) {
+    return;
+  }
+
+  await ensureOffscreenDocument();
+
+  try {
+    const response: RecoverRecordingsResponse = await chrome.runtime.sendMessage({
+      type: 'RECOVER_RECORDINGS',
+    });
+
+    for (const recording of response.recordings ?? []) {
+      await downloadRecording(recording.blobUrl, recording.filename);
+      await deleteRecordingBackup(recording.backupId);
+    }
+  } finally {
+    // A recording may have started while recovering; it needs the offscreen document.
+    if (!isRecording()) {
+      await closeOffscreenDocument();
+    }
+  }
+}
+
+function isRecording() {
+  return status.state === 'recording';
+}
+
+async function setCloseWarning(tabId: number | null, enabled: boolean) {
+  if (tabId === null) {
+    return;
+  }
+
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      func: toggleBeforeUnloadWarning,
+      args: [enabled],
+    });
+  } catch {
+    // The tab is gone or can't be scripted (e.g. the Chrome Web Store).
+  }
+}
+
+// Runs inside the recorded tab, so it must not reference anything outside itself.
+function toggleBeforeUnloadWarning(enabled: boolean) {
+  const page = window as Window & { __srecBeforeUnload?: (event: BeforeUnloadEvent) => void };
+
+  if (enabled && !page.__srecBeforeUnload) {
+    page.__srecBeforeUnload = (event) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', page.__srecBeforeUnload);
+  } else if (!enabled && page.__srecBeforeUnload) {
+    window.removeEventListener('beforeunload', page.__srecBeforeUnload);
+    delete page.__srecBeforeUnload;
   }
 }
 
@@ -298,6 +408,7 @@ function isRecordingStatus(value: unknown): value is RecordingStatus {
       candidate.state === 'recording' ||
       candidate.state === 'error') &&
     (typeof candidate.startedAt === 'number' || candidate.startedAt === null) &&
+    (typeof candidate.tabId === 'number' || candidate.tabId === null) &&
     (typeof candidate.error === 'string' || candidate.error === null)
   );
 }
