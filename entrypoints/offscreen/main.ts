@@ -19,9 +19,9 @@ type RecoveredRecording = {
   backupId: string;
 };
 
-const VIDEO_BITS_PER_SECOND = 12_000_000;
-const AUDIO_BITS_PER_SECOND = 192_000;
-const KEYFRAME_INTERVAL_MS = 1000;
+const VIDEO_BITS_PER_SECOND = 3_000_000;
+const AUDIO_BITS_PER_SECOND = 128_000;
+const KEYFRAME_INTERVAL_MS = 5000;
 const MIME_TYPES = [
   'video/mp4;codecs=avc1,mp4a.40.2',
   'video/mp4;codecs=avc1,opus',
