@@ -10,6 +10,9 @@ const ICONS = {
 
 export default defineConfig({
   modules: ['@wxt-dev/module-react'],
+  zip: {
+    artifactTemplate: '{{name}}-{{browser}}.zip',
+  },
   manifest: {
     name: 'SREC',
     description: 'Record the active browser tab with sound and save it as an MP4 file.',

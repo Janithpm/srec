@@ -10,7 +10,6 @@ export function useElapsedTime(startedAt: number | null) {
       return;
     }
 
-    setNow(Date.now());
     const timer = window.setInterval(() => setNow(Date.now()), TICK_INTERVAL_MS);
     return () => window.clearInterval(timer);
   }, [startedAt]);

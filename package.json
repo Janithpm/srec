@@ -1,14 +1,19 @@
 {
   "name": "srec",
-  "description": "A WXT Chrome extension for recording the active tab with sound.",
+  "description": "Record the active browser tab with sound and save it as an MP4 file.",
   "private": true,
   "version": "1.0.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Janithpm/srec.git"
+  },
   "type": "module",
   "scripts": {
     "dev": "wxt",
     "build": "wxt build",
     "zip": "wxt zip",
     "compile": "tsc --noEmit",
+    "lint": "eslint . && tsc --noEmit",
     "postinstall": "wxt prepare"
   },
   "dependencies": {
@@ -16,11 +21,17 @@
     "react-dom": "^19.2.4"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/chrome": "^0.1.42",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@wxt-dev/module-react": "^1.1.5",
+    "eslint": "^10.13.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.13.0",
     "typescript": "^5.9.3",
+    "typescript-eslint": "^8.71.2",
     "wxt": "^0.20.26"
-  }
+  },
+  "packageManager": "pnpm@12.9.1"
 }
