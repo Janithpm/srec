@@ -1,17 +1,20 @@
 const OFFSCREEN_URL = 'offscreen.html';
 
+const holders = new Set<string>();
 let creatingDocument: Promise<void> | null = null;
 
-export function ensureOffscreenDocument() {
+export async function holdOffscreenDocument(holder: string) {
+  holders.add(holder);
   creatingDocument ??= createOffscreenDocument().finally(() => {
     creatingDocument = null;
   });
-
-  return creatingDocument;
+  await creatingDocument;
 }
 
-export async function closeOffscreenDocument() {
-  if (await hasOffscreenDocument()) {
+export async function releaseOffscreenDocument(holder: string) {
+  holders.delete(holder);
+
+  if (holders.size === 0 && (await hasOffscreenDocument())) {
     await chrome.offscreen.closeDocument();
   }
 }

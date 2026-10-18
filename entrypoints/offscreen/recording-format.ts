@@ -3,7 +3,6 @@ const AUDIO_BITS_PER_SECOND = 128_000;
 const KEYFRAME_INTERVAL_MS = 5000;
 const FALLBACK_MIME_TYPE = 'video/webm';
 
-// In order of preference; the first one the browser supports is used.
 const MIME_TYPES = [
   'video/mp4;codecs=avc1,mp4a.40.2',
   'video/mp4;codecs=avc1,opus',

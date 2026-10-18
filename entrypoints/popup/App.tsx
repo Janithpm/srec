@@ -1,39 +1,80 @@
-import { useElapsedTime } from './useElapsedTime';
-import { useRecorder } from './useRecorder';
+import { useEffect, useRef, useState, type TransitionEvent } from 'react';
+import { RecorderView } from './RecorderView';
+import { SettingsView } from './SettingsView';
+import { useSettings } from './useSettings';
+import { useShortcuts } from './useShortcuts';
 import './App.css';
 
+type View = 'recorder' | 'settings';
+
 function App() {
-  const { status, isBusy, startRecording, stopRecording } = useRecorder();
-  const isRecording = status.state === 'recording';
-  const elapsedTime = useElapsedTime(isRecording ? status.startedAt : null);
+  const [view, setView] = useState<View>('recorder');
+  const [isSliding, setIsSliding] = useState(false);
+  const { settings, updateSettings } = useSettings();
+  const shortcuts = useShortcuts();
+  const trackRef = useRef<HTMLDivElement>(null);
+  const hasNavigated = useRef(false);
+
+  useEffect(() => {
+    if (!hasNavigated.current) {
+      return;
+    }
+
+    trackRef.current
+      ?.querySelector<HTMLElement>(`[data-panel="${view}"] [data-autofocus]`)
+      ?.focus({ preventScroll: true });
+  }, [view]);
+
+  function showView(nextView: View) {
+    if (nextView === view) {
+      return;
+    }
+
+    hasNavigated.current = true;
+    setView(nextView);
+    setIsSliding(true);
+  }
+
+  function handleTransitionEnd(event: TransitionEvent<HTMLDivElement>) {
+    if (event.target === event.currentTarget && event.propertyName === 'transform') {
+      setIsSliding(false);
+    }
+  }
+
+  function panelProps(panel: View) {
+    const isActive = panel === view;
+
+    return {
+      className: `panel${!isActive && !isSliding ? ' panel--collapsed' : ''}`,
+      'data-panel': panel,
+      inert: !isActive,
+    };
+  }
 
   return (
-    <main className="recorder">
-      <header className="recorder__header">
-        <div>
-          <p className="recorder__eyebrow">SREC</p>
-          <h1>{elapsedTime}</h1>
+    <div className="popup">
+      <div
+        ref={trackRef}
+        className={`popup__track popup__track--${view}`}
+        onTransitionEnd={handleTransitionEnd}
+      >
+        <div {...panelProps('recorder')}>
+          <RecorderView
+            settings={settings}
+            shortcuts={shortcuts}
+            onOpenSettings={() => showView('settings')}
+          />
         </div>
-        <span className={`status status--${status.state}`}>
-          {isRecording ? 'REC' : status.state}
-        </span>
-      </header>
-
-      <div className="recorder__actions">
-        <button
-          className={`button ${isRecording ? 'button--stop' : 'button--start'}`}
-          type="button"
-          onClick={isRecording ? stopRecording : startRecording}
-          disabled={isBusy}
-        >
-          {isRecording ? 'Stop' : 'Start'}
-        </button>
+        <div {...panelProps('settings')}>
+          <SettingsView
+            settings={settings}
+            shortcuts={shortcuts}
+            onUpdate={updateSettings}
+            onBack={() => showView('recorder')}
+          />
+        </div>
       </div>
-
-      {status.state === 'error' && status.error && (
-        <p className="recorder__error">{status.error}</p>
-      )}
-    </main>
+    </div>
   );
 }
 

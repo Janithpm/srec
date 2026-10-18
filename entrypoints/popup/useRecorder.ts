@@ -1,31 +1,26 @@
 import { useEffect, useState } from 'react';
-import { getErrorMessage } from '@/utils/errors';
-import type { PopupRequest, PopupResponse } from '@/utils/messages';
-import { IDLE_RECORDING_STATUS, type RecordingStatus } from '@/utils/recording-status';
+import { sendToBackground, type PopupRequest } from '@/utils/messages';
+import {
+  createErrorStatus,
+  IDLE_RECORDING_STATUS,
+  onRecordingStatusChanged,
+  type RecordingStatus,
+} from '@/utils/recording-status';
 
 export function useRecorder() {
   const [status, setStatus] = useState<RecordingStatus>(IDLE_RECORDING_STATUS);
   const [isBusy, setIsBusy] = useState(false);
 
-  async function request(message: PopupRequest) {
-    const response = await sendToBackground(message);
-
-    if (response.status) {
-      setStatus(response.status);
-    } else if (!response.ok) {
-      setStatus({ ...IDLE_RECORDING_STATUS, state: 'error', error: response.error });
-    }
-  }
+  useEffect(() => {
+    request({ type: 'GET_STATUS' }).then(setStatus);
+    return onRecordingStatusChanged(setStatus);
+  }, []);
 
   async function requestWhileBusy(message: PopupRequest) {
     setIsBusy(true);
-    await request(message);
+    setStatus(await request(message));
     setIsBusy(false);
   }
-
-  useEffect(() => {
-    request({ type: 'GET_STATUS' });
-  }, []);
 
   return {
     status,
@@ -35,10 +30,7 @@ export function useRecorder() {
   };
 }
 
-async function sendToBackground(message: PopupRequest): Promise<PopupResponse> {
-  try {
-    return await chrome.runtime.sendMessage(message);
-  } catch (error) {
-    return { ok: false, error: getErrorMessage(error, 'Could not reach the recorder.') };
-  }
+async function request(message: PopupRequest) {
+  const status = await sendToBackground(message).catch(() => undefined);
+  return status ?? createErrorStatus('Could not reach the recorder.');
 }

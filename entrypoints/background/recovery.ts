@@ -1,8 +1,10 @@
+import { sendToOffscreen, type RecoveredRecording } from '@/utils/messages';
 import { deleteRecordingBackup, listRecordingBackups } from '@/utils/recording-backup';
-import { sendOffscreenCommand } from '@/utils/messages';
 import { downloadRecording } from './download';
-import { closeOffscreenDocument, ensureOffscreenDocument } from './offscreen-document';
+import { holdOffscreenDocument, releaseOffscreenDocument } from './offscreen-document';
 import { ensureStatusLoaded, isRecording } from './status-store';
+
+const RECOVERY_HOLDER = 'recovery';
 
 export async function recoverInterruptedRecordings() {
   await ensureStatusLoaded();
@@ -11,19 +13,20 @@ export async function recoverInterruptedRecordings() {
     return;
   }
 
-  await ensureOffscreenDocument();
+  await holdOffscreenDocument(RECOVERY_HOLDER);
 
   try {
-    const { recordings = [] } = await sendOffscreenCommand({ type: 'RECOVER_RECORDINGS' });
+    const { recordings = [] } = await sendToOffscreen({ type: 'RECOVER_RECORDINGS' });
 
     for (const recording of recordings) {
-      await downloadRecording(recording.blobUrl, recording.filename);
-      await deleteRecordingBackup(recording.backupId);
+      await saveRecoveredRecording(recording).catch(console.error);
     }
   } finally {
-    // A recording may have started while recovering; it needs the offscreen document.
-    if (!isRecording()) {
-      await closeOffscreenDocument();
-    }
+    await releaseOffscreenDocument(RECOVERY_HOLDER);
   }
+}
+
+async function saveRecoveredRecording({ blobUrl, filename, backupId }: RecoveredRecording) {
+  await downloadRecording(blobUrl, filename, { allowSaveAs: false });
+  await deleteRecordingBackup(backupId);
 }

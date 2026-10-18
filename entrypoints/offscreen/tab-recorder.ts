@@ -1,9 +1,7 @@
-import { notifyBackground } from '@/utils/messages';
-import {
-  appendRecordingChunk,
-  createRecordingBackup,
-  deleteRecordingBackup,
-} from '@/utils/recording-backup';
+import { sendToBackground } from '@/utils/messages';
+import { appendRecordingChunk, createRecordingBackup, deleteRecordingBackup } from '@/utils/recording-backup';
+import { createAudioMixer, type AudioMixer } from './audio-mixer';
+import { captureTab, stopTracks } from './media';
 import { createRecordingFilename, getRecordedMimeType, getRecorderOptions } from './recording-format';
 
 const CHUNK_INTERVAL_MS = 1000;
@@ -11,7 +9,7 @@ const CHUNK_INTERVAL_MS = 1000;
 type RecordingSession = {
   recorder: MediaRecorder;
   stream: MediaStream;
-  audioContext: AudioContext | null;
+  audio: AudioMixer;
   startedAt: number;
   mimeType: string;
   chunks: Blob[];
@@ -25,55 +23,34 @@ export function getActiveBackupId() {
   return session?.backupId ?? null;
 }
 
-export async function startRecording(streamId: string, startedAt: number) {
+export async function startRecording(streamId: string, startedAt: number, microphone: boolean) {
   if (session) {
     return;
   }
 
   const stream = await captureTab(streamId);
-  const recorder = new MediaRecorder(stream, getRecorderOptions());
-  const mimeType = getRecordedMimeType(recorder);
-
-  const current: RecordingSession = {
-    recorder,
-    stream,
-    audioContext: keepTabAudioAudible(stream),
-    startedAt,
-    mimeType,
-    chunks: [],
-    backupId: null,
-    backupWrites: Promise.resolve(),
-  };
+  const current = createSession(stream, startedAt);
   session = current;
 
-  // The tab stream ends when the recorded tab is closed.
   stream.getTracks().forEach((track) => track.addEventListener('ended', stopRecording));
-
-  recorder.ondataavailable = (event) => {
-    if (event.data.size > 0) {
-      current.chunks.push(event.data);
-      backUpChunk(current, event.data);
-    }
-  };
-
-  recorder.onerror = () => {
-    notifyBackground({ type: 'RECORDING_ERROR', error: 'The recorder stopped unexpectedly.' }).catch(
-      () => {},
-    );
-    discardRecording().catch(console.error);
-  };
-
-  recorder.onstop = () => {
-    // A discarded session has already been released.
+  current.recorder.ondataavailable = (event) => storeChunk(current, event.data);
+  current.recorder.onerror = () => handleRecorderError();
+  current.recorder.onstop = () => {
     if (session === current) {
       finishRecording(current);
     }
   };
 
-  current.backupId = await startBackup(startedAt, mimeType);
+  void current.audio.setMicrophone(microphone);
+  current.backupId = await startBackup(startedAt, current.mimeType);
+
   if (session === current) {
-    recorder.start(CHUNK_INTERVAL_MS);
+    current.recorder.start(CHUNK_INTERVAL_MS);
   }
+}
+
+export async function setMicrophone(enabled: boolean) {
+  await session?.audio.setMicrophone(enabled);
 }
 
 export function stopRecording() {
@@ -96,17 +73,40 @@ export async function discardRecording() {
   }
 }
 
+function createSession(stream: MediaStream, startedAt: number): RecordingSession {
+  let audio: AudioMixer | undefined;
+
+  try {
+    audio = createAudioMixer(stream);
+    const recordedStream = new MediaStream([...stream.getVideoTracks(), audio.track]);
+    const recorder = new MediaRecorder(recordedStream, getRecorderOptions());
+
+    return {
+      recorder,
+      stream,
+      audio,
+      startedAt,
+      mimeType: getRecordedMimeType(recorder),
+      chunks: [],
+      backupId: null,
+      backupWrites: Promise.resolve(),
+    };
+  } catch (error) {
+    stopTracks(stream);
+    audio?.close();
+    throw error;
+  }
+}
+
 function finishRecording(finished: RecordingSession) {
   endSession(finished);
 
   const blob = new Blob(finished.chunks, { type: finished.mimeType });
   const blobUrl = URL.createObjectURL(blob);
 
-  // Report the recording only once every chunk is backed up, because the
-  // background deletes the backup after the download starts.
   finished.backupWrites
     .then(() =>
-      notifyBackground({
+      sendToBackground({
         type: 'RECORDING_STOPPED',
         blobUrl,
         filename: createRecordingFilename(finished.startedAt, finished.mimeType),
@@ -116,32 +116,15 @@ function finishRecording(finished: RecordingSession) {
     .catch(() => URL.revokeObjectURL(blobUrl));
 }
 
+function handleRecorderError() {
+  sendToBackground({ type: 'RECORDING_ERROR', error: 'The recorder stopped unexpectedly.' }).catch(() => {});
+  discardRecording().catch(console.error);
+}
+
 function endSession(ended: RecordingSession) {
   session = null;
-  ended.stream.getTracks().forEach((track) => track.stop());
-  ended.audioContext?.close().catch(() => {});
-}
-
-function captureTab(streamId: string) {
-  const tabSource = {
-    mandatory: {
-      chromeMediaSource: 'tab',
-      chromeMediaSourceId: streamId,
-    },
-  } as MediaTrackConstraints;
-
-  return navigator.mediaDevices.getUserMedia({ audio: tabSource, video: tabSource });
-}
-
-// Capturing a tab mutes it for the user, so route the audio back to the speakers.
-function keepTabAudioAudible(stream: MediaStream) {
-  if (stream.getAudioTracks().length === 0) {
-    return null;
-  }
-
-  const audioContext = new AudioContext();
-  audioContext.createMediaStreamSource(stream).connect(audioContext.destination);
-  return audioContext;
+  stopTracks(ended.stream);
+  ended.audio.close();
 }
 
 async function startBackup(startedAt: number, mimeType: string) {
@@ -151,19 +134,22 @@ async function startBackup(startedAt: number, mimeType: string) {
     await createRecordingBackup({ id, startedAt, mimeType });
     return id;
   } catch (error) {
-    // Recording still works without a backup; it just can't be recovered after a crash.
     console.error('Could not create recording backup.', error);
     return null;
   }
 }
 
-function backUpChunk(recording: RecordingSession, data: Blob) {
-  const { backupId } = recording;
-  if (!backupId) {
+function storeChunk(recording: RecordingSession, data: Blob) {
+  if (data.size === 0) {
     return;
   }
 
-  recording.backupWrites = recording.backupWrites
-    .then(() => appendRecordingChunk(backupId, data))
-    .catch((error) => console.error('Could not back up recording chunk.', error));
+  recording.chunks.push(data);
+
+  const { backupId } = recording;
+  if (backupId) {
+    recording.backupWrites = recording.backupWrites
+      .then(() => appendRecordingChunk(backupId, data))
+      .catch((error) => console.error('Could not back up recording chunk.', error));
+  }
 }

@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SREC - Microphone</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main class="card" data-state="requesting">
+      <h1 class="card__title" id="title">Allow microphone</h1>
+      <p class="card__message" id="message">Choose Allow in Chrome's prompt.</p>
+      <button class="card__button" id="retry" type="button" hidden>Try again</button>
+      <p class="card__note">Your mic is recorded even when you're muted in a meeting.</p>
+    </main>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

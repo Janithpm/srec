@@ -1,39 +1,46 @@
+import { TOGGLE_MICROPHONE_COMMAND, TOGGLE_RECORDING_COMMAND } from '@/utils/commands';
 import { getErrorMessage } from '@/utils/errors';
-import { isBackgroundMessage, type BackgroundMessage, type PopupResponse } from '@/utils/messages';
-import { failRecording, saveRecording, startRecording, stopRecording } from './recording';
+import { isBackgroundMessage, type BackgroundMessage } from '@/utils/messages';
+import { toggleMicrophone } from '@/utils/microphone';
+import { onSettingsChanged } from '@/utils/settings';
+import { failRecording, saveRecording, setRecordingMicrophone, startRecording, stopRecording } from './recording';
 import { recoverInterruptedRecordings } from './recovery';
 import { ensureStatusLoaded, getStatus, isRecording } from './status-store';
-import { setCloseWarning } from './tab-indicators';
+import { flashMicrophoneBadge, setCloseWarning } from './tab-indicators';
 
 export default defineBackground(() => {
-  chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) => {
-    if (!isBackgroundMessage(message)) {
+  chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) => {
+    if (!isBackgroundMessage(message, sender)) {
       return false;
     }
 
     handleMessage(message)
-      .then(sendResponse)
-      .catch(async (error) => {
-        const errorMessage = getErrorMessage(error);
-        await failRecording(errorMessage).catch(console.error);
-        sendResponse({ ok: false, error: errorMessage, status: getStatus() } satisfies PopupResponse);
-      });
+      .catch(reportFailure)
+      .then(() => sendResponse(getStatus()));
 
     return true;
   });
 
-  chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-    if (changeInfo.status !== 'complete') {
-      return;
+  chrome.commands.onCommand.addListener((command) => {
+    if (command === TOGGLE_RECORDING_COMMAND) {
+      toggleRecording().catch(reportFailure);
+    } else if (command === TOGGLE_MICROPHONE_COMMAND) {
+      toggleMicrophoneWithBadge().catch(console.error);
     }
+  });
 
-    ensureStatusLoaded()
-      .then(() => {
-        if (isRecording() && getStatus().tabId === tabId) {
-          return setCloseWarning(tabId, true);
-        }
-      })
-      .catch(console.error);
+  onSettingsChanged((settings, previous) => {
+    if (settings.microphone !== previous.microphone) {
+      ensureStatusLoaded()
+        .then(() => setRecordingMicrophone(settings.microphone))
+        .catch(console.error);
+    }
+  });
+
+  chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+    if (changeInfo.status === 'complete') {
+      restoreCloseWarning(tabId).catch(console.error);
+    }
   });
 
   chrome.runtime.onStartup.addListener(() => {
@@ -45,26 +52,43 @@ export default defineBackground(() => {
   });
 });
 
-async function handleMessage(message: BackgroundMessage): Promise<PopupResponse> {
+async function handleMessage(message: BackgroundMessage) {
   await ensureStatusLoaded();
 
   switch (message.type) {
     case 'START_RECORDING':
-      await startRecording();
-      break;
-
+      return startRecording();
     case 'STOP_RECORDING':
-      await stopRecording();
-      break;
-
+      return stopRecording();
     case 'RECORDING_STOPPED':
-      await saveRecording(message);
-      break;
-
+      return saveRecording(message);
     case 'RECORDING_ERROR':
-      await failRecording(message.error);
-      break;
+      return failRecording(message.error);
   }
+}
 
-  return { ok: true, status: getStatus() };
+async function toggleRecording() {
+  await ensureStatusLoaded();
+  await (isRecording() ? stopRecording() : startRecording());
+}
+
+async function toggleMicrophoneWithBadge() {
+  await ensureStatusLoaded();
+  const enabled = await toggleMicrophone();
+
+  if (enabled !== null) {
+    await flashMicrophoneBadge(enabled);
+  }
+}
+
+async function restoreCloseWarning(tabId: number) {
+  await ensureStatusLoaded();
+
+  if (isRecording() && getStatus().tabId === tabId) {
+    await setCloseWarning(tabId, true);
+  }
+}
+
+async function reportFailure(error: unknown) {
+  await failRecording(getErrorMessage(error)).catch(console.error);
 }

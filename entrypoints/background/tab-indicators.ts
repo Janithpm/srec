@@ -1,12 +1,31 @@
-const BADGE_COLOR = '#dc2626';
+import { isRecording } from './status-store';
+
+const RECORDING_BADGE_COLOR = '#dc2626';
+const MICROPHONE_ON_BADGE_COLOR = '#2563eb';
+const MICROPHONE_OFF_BADGE_COLOR = '#64748b';
+const MICROPHONE_BADGE_DURATION_MS = 1500;
+
+let microphoneBadgeTimer: ReturnType<typeof setTimeout> | null = null;
 
 export async function showRecordingBadge() {
-  await chrome.action.setBadgeBackgroundColor({ color: BADGE_COLOR });
-  await chrome.action.setBadgeText({ text: 'REC' });
+  await setBadge('REC', RECORDING_BADGE_COLOR);
 }
 
 export async function clearRecordingBadge() {
   await chrome.action.setBadgeText({ text: '' });
+}
+
+export async function flashMicrophoneBadge(enabled: boolean) {
+  if (microphoneBadgeTimer) {
+    clearTimeout(microphoneBadgeTimer);
+  }
+
+  await setBadge(enabled ? 'MIC' : 'OFF', enabled ? MICROPHONE_ON_BADGE_COLOR : MICROPHONE_OFF_BADGE_COLOR);
+
+  microphoneBadgeTimer = setTimeout(() => {
+    microphoneBadgeTimer = null;
+    (isRecording() ? showRecordingBadge() : clearRecordingBadge()).catch(console.error);
+  }, MICROPHONE_BADGE_DURATION_MS);
 }
 
 export async function setCloseWarning(tabId: number | null, enabled: boolean) {
@@ -14,13 +33,14 @@ export async function setCloseWarning(tabId: number | null, enabled: boolean) {
     return;
   }
 
-  try {
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      func: toggleBeforeUnloadWarning,
-      args: [enabled],
-    });
-  } catch {}
+  await chrome.scripting
+    .executeScript({ target: { tabId }, func: toggleBeforeUnloadWarning, args: [enabled] })
+    .catch(() => {});
+}
+
+async function setBadge(text: string, color: string) {
+  await chrome.action.setBadgeBackgroundColor({ color });
+  await chrome.action.setBadgeText({ text });
 }
 
 function toggleBeforeUnloadWarning(enabled: boolean) {

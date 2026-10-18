@@ -1,7 +1,3 @@
-// Persists recording chunks to IndexedDB while a recording is in progress so the
-// recording can be recovered if the browser (or the offscreen document) is killed
-// before the user stops it.
-
 export type RecordingBackup = {
   id: string;
   startedAt: number;
@@ -85,7 +81,6 @@ export async function listRecordingBackups() {
 }
 
 export async function getRecordingBackupChunks(sessionId: string) {
-  // Chunks use an auto-incrementing key, so results come back in recording order.
   const records = await runTransaction<ChunkRecord[]>([CHUNKS_STORE], 'readonly', (transaction) =>
     transaction.objectStore(CHUNKS_STORE).index(SESSION_INDEX).getAll(sessionId),
   );

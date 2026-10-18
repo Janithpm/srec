@@ -1,4 +1,5 @@
 import { defineConfig } from 'wxt';
+import { TOGGLE_MICROPHONE_COMMAND, TOGGLE_RECORDING_COMMAND } from './utils/commands';
 
 const ICONS = {
   16: 'icon/icon16.png',
@@ -7,7 +8,6 @@ const ICONS = {
   128: 'icon/icon128.png',
 };
 
-// See https://wxt.dev/api/config.html
 export default defineConfig({
   modules: ['@wxt-dev/module-react'],
   manifest: {
@@ -17,6 +17,16 @@ export default defineConfig({
     icons: ICONS,
     action: {
       default_icon: ICONS,
+    },
+    commands: {
+      [TOGGLE_RECORDING_COMMAND]: {
+        suggested_key: { default: 'Alt+Shift+R' },
+        description: 'Start or stop recording the current tab',
+      },
+      [TOGGLE_MICROPHONE_COMMAND]: {
+        suggested_key: { default: 'Alt+Shift+M' },
+        description: 'Turn microphone recording on or off',
+      },
     },
     permissions: [
       'activeTab',

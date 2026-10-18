@@ -14,22 +14,21 @@ export const IDLE_RECORDING_STATUS: RecordingStatus = {
   error: null,
 };
 
-const RECORDING_STATES: readonly RecordingState[] = ['idle', 'recording', 'error'];
+export const RECORDING_STATUS_STORAGE_KEY = 'recordingStatus';
 
-export function isRecordingStatus(value: unknown): value is RecordingStatus {
-  if (!value || typeof value !== 'object') {
-    return false;
-  }
-
-  const candidate = value as RecordingStatus;
-  return (
-    RECORDING_STATES.includes(candidate.state) &&
-    isNumberOrNull(candidate.startedAt) &&
-    isNumberOrNull(candidate.tabId) &&
-    (typeof candidate.error === 'string' || candidate.error === null)
-  );
+export function createErrorStatus(error: string): RecordingStatus {
+  return { ...IDLE_RECORDING_STATUS, state: 'error', error };
 }
 
-function isNumberOrNull(value: unknown) {
-  return typeof value === 'number' || value === null;
+export function onRecordingStatusChanged(callback: (status: RecordingStatus) => void) {
+  const listener = (changes: Record<string, chrome.storage.StorageChange>, areaName: string) => {
+    const nextStatus = changes[RECORDING_STATUS_STORAGE_KEY]?.newValue as RecordingStatus | undefined;
+
+    if (areaName === 'session' && nextStatus) {
+      callback(nextStatus);
+    }
+  };
+
+  chrome.storage.onChanged.addListener(listener);
+  return () => chrome.storage.onChanged.removeListener(listener);
 }
