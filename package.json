@@ -2,7 +2,7 @@
   "name": "srec",
   "description": "Record the active browser tab with sound and save it as an MP4 file.",
   "private": true,
-  "version": "1.0.0",
+  "version": "2.0.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/Janithpm/srec.git"
