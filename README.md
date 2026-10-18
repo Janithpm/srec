@@ -114,28 +114,3 @@ Files are named `tab-recording-YYYY-MM-DD-HH-MM-SS.mp4`.
 | `storage`          | Remember your settings.                                    |
 | `unlimitedStorage` | Back up long recordings locally until they're saved.       |
 | `scripting`        | Warn you before closing the tab that's being recorded.     |
-
-## Development
-
-Built with [WXT](https://wxt.dev), React and TypeScript.
-
-```sh
-pnpm install
-pnpm dev      # opens Chrome with the extension loaded and hot reload
-pnpm lint     # ESLint + type check
-pnpm build    # production build in .output/chrome-mv3
-pnpm zip      # .output/srec-chrome.zip
-```
-
-### Releasing
-
-Releases are built and published by [GitHub Actions](.github/workflows/release.yml) when a version tag is pushed:
-
-```sh
-npm version patch --no-git-tag-version   # or minor / major
-git commit -am "chore: release v$(node -p "require('./package.json').version")"
-git tag "v$(node -p "require('./package.json').version")"
-git push && git push --tags
-```
-
-The workflow checks that the tag matches the version in `package.json`, runs lint, builds the zip and creates a GitHub release with generated notes and `srec-chrome.zip` attached.
