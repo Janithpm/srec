@@ -1,3 +1,5 @@
+import { createDatabase } from './indexed-db';
+
 export type RecordingBackup = {
   id: string;
   startedAt: number;
@@ -9,57 +11,18 @@ type ChunkRecord = {
   data: Blob;
 };
 
-const DB_NAME = 'srec-recordings';
-const DB_VERSION = 1;
 const SESSIONS_STORE = 'sessions';
 const CHUNKS_STORE = 'chunks';
 const SESSION_INDEX = 'sessionId';
 
-let dbPromise: Promise<IDBDatabase> | null = null;
-
-function openDatabase() {
-  if (!dbPromise) {
-    dbPromise = new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open(DB_NAME, DB_VERSION);
-
-      request.onupgradeneeded = () => {
-        const db = request.result;
-        db.createObjectStore(SESSIONS_STORE, { keyPath: 'id' });
-        const chunks = db.createObjectStore(CHUNKS_STORE, { autoIncrement: true });
-        chunks.createIndex(SESSION_INDEX, SESSION_INDEX);
-      };
-
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => {
-        dbPromise = null;
-        reject(request.error);
-      };
-    });
-  }
-
-  return dbPromise;
-}
-
-function runTransaction<T>(
-  storeNames: string[],
-  mode: IDBTransactionMode,
-  callback: (transaction: IDBTransaction) => IDBRequest<T> | void,
-) {
-  return openDatabase().then(
-    (db) =>
-      new Promise<T | undefined>((resolve, reject) => {
-        const transaction = db.transaction(storeNames, mode);
-        const request = callback(transaction);
-
-        transaction.oncomplete = () => resolve(request?.result);
-        transaction.onerror = () => reject(transaction.error);
-        transaction.onabort = () => reject(transaction.error);
-      }),
-  );
-}
+const database = createDatabase('srec-recordings', 1, (db) => {
+  db.createObjectStore(SESSIONS_STORE, { keyPath: 'id' });
+  const chunks = db.createObjectStore(CHUNKS_STORE, { autoIncrement: true });
+  chunks.createIndex(SESSION_INDEX, SESSION_INDEX);
+});
 
 export async function createRecordingBackup(backup: RecordingBackup) {
-  await runTransaction([SESSIONS_STORE], 'readwrite', (transaction) => {
+  await database.run([SESSIONS_STORE], 'readwrite', (transaction) => {
     transaction.objectStore(SESSIONS_STORE).put(backup);
   });
 }
@@ -67,13 +30,13 @@ export async function createRecordingBackup(backup: RecordingBackup) {
 export async function appendRecordingChunk(sessionId: string, data: Blob) {
   const record: ChunkRecord = { sessionId, data };
 
-  await runTransaction([CHUNKS_STORE], 'readwrite', (transaction) => {
+  await database.run([CHUNKS_STORE], 'readwrite', (transaction) => {
     transaction.objectStore(CHUNKS_STORE).add(record);
   });
 }
 
 export async function listRecordingBackups() {
-  const backups = await runTransaction<RecordingBackup[]>([SESSIONS_STORE], 'readonly', (transaction) =>
+  const backups = await database.run<RecordingBackup[]>([SESSIONS_STORE], 'readonly', (transaction) =>
     transaction.objectStore(SESSIONS_STORE).getAll(),
   );
 
@@ -81,7 +44,7 @@ export async function listRecordingBackups() {
 }
 
 export async function getRecordingBackupChunks(sessionId: string) {
-  const records = await runTransaction<ChunkRecord[]>([CHUNKS_STORE], 'readonly', (transaction) =>
+  const records = await database.run<ChunkRecord[]>([CHUNKS_STORE], 'readonly', (transaction) =>
     transaction.objectStore(CHUNKS_STORE).index(SESSION_INDEX).getAll(sessionId),
   );
 
@@ -89,7 +52,7 @@ export async function getRecordingBackupChunks(sessionId: string) {
 }
 
 export async function deleteRecordingBackup(sessionId: string) {
-  await runTransaction([SESSIONS_STORE, CHUNKS_STORE], 'readwrite', (transaction) => {
+  await database.run([SESSIONS_STORE, CHUNKS_STORE], 'readwrite', (transaction) => {
     transaction.objectStore(SESSIONS_STORE).delete(sessionId);
 
     const chunkKeys = transaction

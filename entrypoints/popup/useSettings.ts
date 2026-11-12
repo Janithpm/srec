@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { DEFAULT_SETTINGS, getSettings, onSettingsChanged, saveSettings, type Settings } from '@/utils/settings';
+import { logger } from './logger';
 
 export function useSettings() {
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -15,7 +16,7 @@ export function useSettings() {
   function updateSettings(changes: Partial<Settings>) {
     const nextSettings = { ...(settings ?? DEFAULT_SETTINGS), ...changes };
     setSettings(nextSettings);
-    saveSettings(nextSettings).catch(console.error);
+    saveSettings(nextSettings).catch((error) => logger.error('Could not save settings.', error));
   }
 
   return { settings, updateSettings };

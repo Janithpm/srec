@@ -1,6 +1,7 @@
 import { toggleMicrophone } from '@/utils/microphone';
 import type { Settings } from '@/utils/settings';
 import { MicIcon, MicOffIcon, SettingsIcon } from './icons';
+import { logger } from './logger';
 import { useElapsedTime } from './useElapsedTime';
 import { useMicrophonePermission } from './useMicrophonePermission';
 import { useRecorder } from './useRecorder';
@@ -56,7 +57,9 @@ export function RecorderView({ settings, shortcuts, onOpenSettings }: RecorderVi
           aria-label="Microphone"
           aria-pressed={isMicrophoneOn}
           title={withShortcut(isMicrophoneOn ? 'Microphone on' : 'Microphone off', shortcuts?.toggleMicrophone)}
-          onClick={() => toggleMicrophone().catch(console.error)}
+          onClick={() =>
+            toggleMicrophone().catch((error) => logger.error('Could not toggle the microphone.', error))
+          }
           disabled={!settings || microphonePermission === null}
         >
           {isMicrophoneOn ? <MicIcon /> : <MicOffIcon />}

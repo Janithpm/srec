@@ -1,7 +1,11 @@
 import { getErrorMessage } from '@/utils/errors';
+import { captureUncaughtErrors } from '@/utils/logger';
 import { isOffscreenCommand, type OffscreenCommand, type OffscreenResponse } from '@/utils/messages';
+import { logger } from './logger';
 import { recoverRecordings } from './recovery';
 import { discardRecording, setMicrophone, startRecording, stopRecording } from './tab-recorder';
+
+captureUncaughtErrors(logger);
 
 chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) => {
   if (!isOffscreenCommand(message, sender)) {
@@ -10,7 +14,10 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
 
   handleCommand(message)
     .then(sendResponse)
-    .catch((error) => sendResponse({ ok: false, error: getErrorMessage(error) } satisfies OffscreenResponse));
+    .catch((error) => {
+      logger.error(`${message.type} failed.`, error);
+      sendResponse({ ok: false, error: getErrorMessage(error) } satisfies OffscreenResponse);
+    });
 
   return true;
 });

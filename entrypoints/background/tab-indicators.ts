@@ -1,3 +1,4 @@
+import { logger } from './logger';
 import { isRecording } from './status-store';
 
 const RECORDING_BADGE_COLOR = '#dc2626';
@@ -24,7 +25,9 @@ export async function flashMicrophoneBadge(enabled: boolean) {
 
   microphoneBadgeTimer = setTimeout(() => {
     microphoneBadgeTimer = null;
-    (isRecording() ? showRecordingBadge() : clearRecordingBadge()).catch(console.error);
+    (isRecording() ? showRecordingBadge() : clearRecordingBadge()).catch((error) =>
+      logger.warn('Could not restore the badge.', error),
+    );
   }, MICROPHONE_BADGE_DURATION_MS);
 }
 

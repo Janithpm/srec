@@ -1,3 +1,4 @@
+import { logger } from './logger';
 import { stopTracks } from './media';
 
 const MICROPHONE_CONSTRAINTS: MediaStreamConstraints = {
@@ -46,7 +47,7 @@ export function createAudioMixer(tabStream: MediaStream): AudioMixer {
       source.connect(output);
       microphone = { stream, source };
     } catch (error) {
-      console.error('Could not open the microphone.', error);
+      logger.error('Could not open the microphone.', error);
     }
   }
 

@@ -1,8 +1,9 @@
 import { sendToBackground } from '@/utils/messages';
 import { appendRecordingChunk, createRecordingBackup, deleteRecordingBackup } from '@/utils/recording-backup';
 import { createAudioMixer, type AudioMixer } from './audio-mixer';
+import { logger } from './logger';
 import { captureTab, stopTracks } from './media';
-import { createRecordingFilename, getRecordedMimeType, getRecorderOptions } from './recording-format';
+import { createRecordingFilename, getRecorderOptions, pickMimeType } from './recording-format';
 
 const CHUNK_INTERVAL_MS = 1000;
 
@@ -12,6 +13,7 @@ type RecordingSession = {
   audio: AudioMixer;
   startedAt: number;
   mimeType: string;
+  failedMimeTypes: Set<string>;
   chunks: Blob[];
   backupId: string | null;
   backupWrites: Promise<void>;
@@ -33,19 +35,16 @@ export async function startRecording(streamId: string, startedAt: number, microp
   session = current;
 
   stream.getTracks().forEach((track) => track.addEventListener('ended', stopRecording));
-  current.recorder.ondataavailable = (event) => storeChunk(current, event.data);
-  current.recorder.onerror = () => handleRecorderError();
-  current.recorder.onstop = () => {
-    if (session === current) {
-      finishRecording(current);
-    }
-  };
 
   void current.audio.setMicrophone(microphone);
   current.backupId = await startBackup(startedAt, current.mimeType);
 
   if (session === current) {
-    current.recorder.start(CHUNK_INTERVAL_MS);
+    if (!startRecorder(current)) {
+      throw new Error('The recorder could not start.');
+    }
+
+    logger.info(`Recording as ${current.mimeType}.`);
   }
 }
 
@@ -69,7 +68,9 @@ export async function discardRecording() {
 
   if (discarded.backupId) {
     await discarded.backupWrites;
-    await deleteRecordingBackup(discarded.backupId).catch(console.error);
+    await deleteRecordingBackup(discarded.backupId).catch((error) =>
+      logger.warn('Could not delete the recording backup.', error),
+    );
   }
 }
 
@@ -77,20 +78,26 @@ function createSession(stream: MediaStream, startedAt: number): RecordingSession
   let audio: AudioMixer | undefined;
 
   try {
-    audio = createAudioMixer(stream);
-    const recordedStream = new MediaStream([...stream.getVideoTracks(), audio.track]);
-    const recorder = new MediaRecorder(recordedStream, getRecorderOptions());
+    const mimeType = pickMimeType(new Set());
+    if (!mimeType) {
+      throw new Error('This browser cannot record video.');
+    }
 
-    return {
-      recorder,
+    audio = createAudioMixer(stream);
+    const created: RecordingSession = {
+      recorder: createRecorder(stream, audio, mimeType),
       stream,
       audio,
       startedAt,
-      mimeType: getRecordedMimeType(recorder),
+      mimeType,
+      failedMimeTypes: new Set(),
       chunks: [],
       backupId: null,
       backupWrites: Promise.resolve(),
     };
+
+    attachRecorder(created);
+    return created;
   } catch (error) {
     stopTracks(stream);
     audio?.close();
@@ -98,7 +105,72 @@ function createSession(stream: MediaStream, startedAt: number): RecordingSession
   }
 }
 
-function finishRecording(finished: RecordingSession) {
+function createRecorder(stream: MediaStream, audio: AudioMixer, mimeType: string) {
+  const recordedStream = new MediaStream([...stream.getVideoTracks(), audio.track]);
+  return new MediaRecorder(recordedStream, getRecorderOptions(mimeType));
+}
+
+function attachRecorder(current: RecordingSession) {
+  const { recorder } = current;
+
+  recorder.ondataavailable = (event) => storeChunk(current, event.data);
+  recorder.onerror = (event) => handleRecorderError(current, event);
+  recorder.onstop = () => {
+    if (session === current) {
+      finishRecording(current);
+    }
+  };
+}
+
+function detachRecorder(recorder: MediaRecorder) {
+  recorder.ondataavailable = null;
+  recorder.onerror = null;
+  recorder.onstop = null;
+
+  if (recorder.state !== 'inactive') {
+    recorder.stop();
+  }
+}
+
+function startRecorder(current: RecordingSession) {
+  for (;;) {
+    try {
+      current.recorder.start(CHUNK_INTERVAL_MS);
+      return true;
+    } catch (error) {
+      logger.error(`Could not start recording as ${current.mimeType}.`, error);
+
+      if (!switchToFallbackFormat(current)) {
+        return false;
+      }
+    }
+  }
+}
+
+function switchToFallbackFormat(current: RecordingSession) {
+  detachRecorder(current.recorder);
+  current.failedMimeTypes.add(current.mimeType);
+
+  const mimeType = pickMimeType(current.failedMimeTypes);
+  if (!mimeType) {
+    return false;
+  }
+
+  try {
+    current.recorder = createRecorder(current.stream, current.audio, mimeType);
+  } catch (error) {
+    logger.error(`Could not create a recorder for ${mimeType}.`, error);
+    return false;
+  }
+
+  logger.warn(`Falling back from ${current.mimeType} to ${mimeType}.`);
+  current.mimeType = mimeType;
+  attachRecorder(current);
+  updateBackupFormat(current);
+  return true;
+}
+
+function finishRecording(finished: RecordingSession, error?: string) {
   endSession(finished);
 
   const blob = new Blob(finished.chunks, { type: finished.mimeType });
@@ -111,14 +183,44 @@ function finishRecording(finished: RecordingSession) {
         blobUrl,
         filename: createRecordingFilename(finished.startedAt, finished.mimeType),
         backupId: finished.backupId,
+        error,
       }),
     )
     .catch(() => URL.revokeObjectURL(blobUrl));
 }
 
-function handleRecorderError() {
-  sendToBackground({ type: 'RECORDING_ERROR', error: 'The recorder stopped unexpectedly.' }).catch(() => {});
-  discardRecording().catch(console.error);
+function handleRecorderError(current: RecordingSession, event: Event) {
+  if (session !== current) {
+    return;
+  }
+
+  const detail = describeRecorderError(event);
+  logger.error(`Recording as ${current.mimeType} failed.`, detail || event);
+  detachRecorder(current.recorder);
+
+  if (current.chunks.length === 0 && switchToFallbackFormat(current) && startRecorder(current)) {
+    return;
+  }
+
+  const error = `The recorder stopped unexpectedly${detail ? ` (${detail})` : ''}.`;
+
+  if (current.chunks.length > 0) {
+    finishRecording(current, `${error} The part recorded before it stopped was saved.`);
+    return;
+  }
+
+  sendToBackground({ type: 'RECORDING_ERROR', error }).catch(() => {});
+  discardRecording().catch((error) => logger.error('Could not discard the recording.', error));
+}
+
+function describeRecorderError(event: Event) {
+  const { error } = event as Event & { error?: unknown };
+
+  if (error instanceof Error) {
+    return [error.name, error.message].filter(Boolean).join(': ');
+  }
+
+  return event instanceof ErrorEvent ? event.message : '';
 }
 
 function endSession(ended: RecordingSession) {
@@ -134,9 +236,20 @@ async function startBackup(startedAt: number, mimeType: string) {
     await createRecordingBackup({ id, startedAt, mimeType });
     return id;
   } catch (error) {
-    console.error('Could not create recording backup.', error);
+    logger.error('Could not create recording backup.', error);
     return null;
   }
+}
+
+function updateBackupFormat(recording: RecordingSession) {
+  const { backupId, startedAt, mimeType } = recording;
+  if (!backupId) {
+    return;
+  }
+
+  recording.backupWrites = recording.backupWrites
+    .then(() => createRecordingBackup({ id: backupId, startedAt, mimeType }))
+    .catch((error) => logger.error('Could not update recording backup.', error));
 }
 
 function storeChunk(recording: RecordingSession, data: Blob) {
@@ -150,6 +263,6 @@ function storeChunk(recording: RecordingSession, data: Blob) {
   if (backupId) {
     recording.backupWrites = recording.backupWrites
       .then(() => appendRecordingChunk(backupId, data))
-      .catch((error) => console.error('Could not back up recording chunk.', error));
+      .catch((error) => logger.error('Could not back up recording chunk.', error));
   }
 }

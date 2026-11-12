@@ -4,6 +4,7 @@ import { deleteRecordingBackup } from '@/utils/recording-backup';
 import { createErrorStatus, IDLE_RECORDING_STATUS } from '@/utils/recording-status';
 import { getSettings } from '@/utils/settings';
 import { downloadRecording } from './download';
+import { logger } from './logger';
 import { holdOffscreenDocument, releaseOffscreenDocument } from './offscreen-document';
 import { getStatus, isRecording, setStatus } from './status-store';
 import { clearRecordingBadge, setCloseWarning, showRecordingBadge } from './tab-indicators';
@@ -45,11 +46,12 @@ export async function setRecordingMicrophone(enabled: boolean) {
   await pendingStart?.catch(() => {});
 
   if (isRecording()) {
-    await sendToOffscreen({ type: 'SET_OFFSCREEN_MICROPHONE', enabled }).catch(console.error);
+    await sendToOffscreen({ type: 'SET_OFFSCREEN_MICROPHONE', enabled })
+      .catch((error) => logger.error('Could not switch the microphone.', error));
   }
 }
 
-export async function saveRecording({ blobUrl, filename, backupId }: RecordingStoppedEvent) {
+export async function saveRecording({ blobUrl, filename, backupId, error }: RecordingStoppedEvent) {
   const { tabId } = getStatus();
 
   await holdOffscreenDocument(blobUrl);
@@ -60,13 +62,18 @@ export async function saveRecording({ blobUrl, filename, backupId }: RecordingSt
 
   try {
     await downloadRecording(blobUrl, filename);
+    logger.info(`Saved ${filename}.`);
 
     if (backupId) {
-      await deleteRecordingBackup(backupId).catch(console.error);
+      await deleteRecordingBackup(backupId).catch((error) => logger.warn('Could not delete the recording backup.', error));
     }
-  } catch (error) {
+
+    if (error && !isRecording()) {
+      await setStatus(createErrorStatus(error));
+    }
+  } catch (downloadError) {
     if (!isRecording()) {
-      await setStatus(createErrorStatus(getErrorMessage(error)));
+      await setStatus(createErrorStatus(getErrorMessage(downloadError)));
     }
   } finally {
     await releaseOffscreenDocument(blobUrl);
@@ -75,6 +82,7 @@ export async function saveRecording({ blobUrl, filename, backupId }: RecordingSt
 
 export async function failRecording(error: string) {
   const { tabId } = getStatus();
+  logger.error(`Recording failed: ${error}`);
 
   await setStatus(createErrorStatus(error));
   await sendToOffscreen({ type: 'CANCEL_OFFSCREEN_RECORDING' }).catch(() => {});
@@ -127,7 +135,9 @@ function waitForStop() {
   });
 
   const timeoutId = setTimeout(() => {
-    failRecording('Timed out while stopping the recording.').catch(console.error);
+    failRecording('Timed out while stopping the recording.').catch((error) =>
+      logger.error('Could not reset after a stop timeout.', error),
+    );
   }, STOP_TIMEOUT_MS);
 
   pendingStop = {

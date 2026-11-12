@@ -1,5 +1,6 @@
 import { sendToOffscreen } from '@/utils/messages';
 import { getDownloadPath, getSettings } from '@/utils/settings';
+import { logger } from './logger';
 
 type DownloadOutcome = 'complete' | 'canceled' | 'failed';
 
@@ -16,6 +17,7 @@ export async function downloadRecording(blobUrl: string, filename: string, { all
     }
 
     if (outcome !== 'complete') {
+      logger.error(`Download of ${path} ended as ${outcome}.`);
       throw new Error('The recording could not be saved.');
     }
   } finally {
@@ -53,6 +55,6 @@ function waitForDownload(downloadId: number) {
     chrome.downloads
       .search({ id: downloadId })
       .then(([item]) => finish(item?.state, item?.error))
-      .catch(console.error);
+      .catch((error) => logger.warn('Could not check the download state.', error));
   });
 }

@@ -7,6 +7,7 @@ export type RecordingStoppedEvent = {
   blobUrl: string;
   filename: string;
   backupId: string | null;
+  error?: string;
 };
 
 export type OffscreenEvent = RecordingStoppedEvent | { type: 'RECORDING_ERROR'; error: string };

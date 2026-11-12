@@ -1,7 +1,9 @@
-import { Fragment } from 'react';
+import { Fragment, useState } from 'react';
 import { SHORTCUTS_SETTINGS_URL } from '@/utils/commands';
+import { exportLogs } from '@/utils/log-export';
 import { DEFAULT_SETTINGS, sanitizeSubfolder, type SaveLocation, type Settings } from '@/utils/settings';
 import { CheckIcon, ChevronLeftIcon } from './icons';
+import { logger } from './logger';
 import { splitShortcut, type Shortcuts } from './useShortcuts';
 
 type SettingsViewProps = {
@@ -41,6 +43,7 @@ export function SettingsView({ settings, shortcuts, onUpdate, onBack }: Settings
 
       {settings && <SaveLocationSettings settings={settings} onUpdate={onUpdate} />}
       {shortcuts && <ShortcutSettings shortcuts={shortcuts} />}
+      <TroubleshootingSettings />
     </div>
   );
 }
@@ -140,6 +143,53 @@ function ShortcutSettings({ shortcuts }: { shortcuts: Shortcuts }) {
             </div>
           );
         })}
+      </div>
+    </section>
+  );
+}
+
+type ExportState = 'idle' | 'exporting' | 'exported' | 'failed';
+
+const EXPORT_LABELS: Record<ExportState, string> = {
+  idle: 'Export',
+  exporting: 'Exporting…',
+  exported: 'Exported',
+  failed: 'Try again',
+};
+
+function TroubleshootingSettings() {
+  const [exportState, setExportState] = useState<ExportState>('idle');
+
+  async function handleExport() {
+    setExportState('exporting');
+
+    try {
+      await exportLogs();
+      setExportState('exported');
+    } catch (error) {
+      logger.error('Could not export logs.', error);
+      setExportState('failed');
+    }
+  }
+
+  return (
+    <section className="section" aria-labelledby="troubleshooting-title">
+      <h3 id="troubleshooting-title" className="section__title">
+        Troubleshooting
+      </h3>
+
+      <div className="list">
+        <div className="list__row">
+          Error logs
+          <button
+            className="text-button"
+            type="button"
+            disabled={exportState === 'exporting'}
+            onClick={handleExport}
+          >
+            {EXPORT_LABELS[exportState]}
+          </button>
+        </div>
       </div>
     </section>
   );
